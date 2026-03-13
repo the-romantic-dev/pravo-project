@@ -21,7 +21,7 @@
 - `src/ui` — Streamlit UI и сервисный слой анализа.
 
 ## Установка
-1. Создайте и активируйте виртуальное окружение.
+1. Создайте и активируйте виртуальное окружение (Python 3.11).
 2. Установите зависимости:
 
 ```powershell
@@ -36,8 +36,8 @@ pip install -r requirements.txt
 Команды:
 
 ```powershell
-python src/core/rag/chunks/build_tk_chunks.py
-python src/core/rag/index/build_index.py
+python -m src.core.rag.chunks.build_tk_chunks
+python -m src.core.rag.index.build_index 
 ```
 
 ## Запуск UI
