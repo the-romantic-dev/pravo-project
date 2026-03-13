@@ -80,7 +80,7 @@ def build_chunks(data: dict) -> list[dict]:
 def save_chunks_jsonl(data: dict, output_path: str | Path) -> None:
     chunks = build_chunks(data)
     output_path = Path(output_path)
-
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
         for chunk in chunks:
             f.write(json.dumps(chunk, ensure_ascii=False) + "\n")
