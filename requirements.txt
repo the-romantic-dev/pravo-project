@@ -1,0 +1,11 @@
+streamlit
+transformers
+sentence-transformers
+langchain-core
+langchain-community
+faiss-cpu
+python-docx
+pdftext
+pymupdf
+pillow
+pypdfium2
