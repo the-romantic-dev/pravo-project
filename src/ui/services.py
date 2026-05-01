@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, asdict
 from datetime import datetime, UTC
 from functools import lru_cache
@@ -12,10 +13,20 @@ from transformers import TextClassificationPipeline
 
 from src.core.classification.contradiction import contradiction_score, get_nli_pipeline
 from src.core.pdf.pdf_chunks_document import PdfChunk, pdf_to_chunks_document
+from src.core.retrieve.definitions import (
+    literal_definition_matches,
+    load_definition_chunk_ids,
+    load_definitions,
+    load_definitions_faiss,
+    retrieve_top_definitions,
+)
 from src.core.retrieve.retrieve import load_fiass, retrieve_top_k
 
 DEFAULT_CONTRADICTION_MODEL = "cointegrated/rubert-base-cased-nli-threeway"
 DEFAULT_CONTRADICTION_THRESHOLD = 0.5
+DEFAULT_DEFINITION_TOP_K = 4
+DEFAULT_DEFINITION_SIMILARITY_THRESHOLD = 0.72
+ANALYSIS_SCHEMA_VERSION = 2
 BBox = tuple[float, float, float, float]
 
 
@@ -33,12 +44,23 @@ class MatchResult:
 
 
 @dataclass(slots=True)
+class DefinitionHit:
+    term: str
+    text: str
+    chunks: list[str]
+    source_articles: list[str]
+    similarity: float | None
+    match_type: str
+
+
+@dataclass(slots=True)
 class ClauseResult:
     clause_id: str
     section: str
     point_number: str | None
     text: str
     page_to_bbox: dict[int, BBox]
+    definitions: list[DefinitionHit]
     matches: list[MatchResult]
 
 
@@ -59,6 +81,7 @@ class AnalysisResult:
                 "point_number": clause.point_number,
                 "text": clause.text,
                 "page_to_bbox": clause.page_to_bbox,
+                "definitions": [asdict(definition) for definition in clause.definitions],
                 "matches": [asdict(match) for match in clause.matches],
             }
             for clause in self.clauses
@@ -72,6 +95,21 @@ def get_cached_faiss():
 
 
 @lru_cache(maxsize=1)
+def get_cached_definitions_faiss():
+    return load_definitions_faiss()
+
+
+@lru_cache(maxsize=1)
+def get_cached_definitions():
+    return load_definitions()
+
+
+@lru_cache(maxsize=1)
+def get_cached_definition_chunk_ids():
+    return load_definition_chunk_ids()
+
+
+@lru_cache(maxsize=1)
 def get_cached_nli() -> TextClassificationPipeline:
     return get_nli_pipeline()
 
@@ -79,6 +117,8 @@ def get_cached_nli() -> TextClassificationPipeline:
 def analyze_pdf(
     pdf_path: Path,
     top_k: int = 3,
+    definition_top_k: int = DEFAULT_DEFINITION_TOP_K,
+    definition_similarity_threshold: float = DEFAULT_DEFINITION_SIMILARITY_THRESHOLD,
     max_clauses: int | None = 40,
     contradiction_model_name: str = DEFAULT_CONTRADICTION_MODEL,
     contradiction_threshold: float = DEFAULT_CONTRADICTION_THRESHOLD,
@@ -89,6 +129,9 @@ def analyze_pdf(
     analysis_clauses: list[ClauseResult] = []
     total = len(clauses)
     faiss = get_cached_faiss()
+    definitions_faiss = get_cached_definitions_faiss() if definition_top_k > 0 else None
+    definitions = get_cached_definitions() if definition_top_k > 0 else {}
+    definition_chunk_ids = get_cached_definition_chunk_ids()
     nli = get_cached_nli() if run_contradiction_scoring else None
 
     for idx, clause_data in enumerate(clauses, start=1):
@@ -97,6 +140,13 @@ def analyze_pdf(
 
         clause_id = f"clause-{idx}"
         query_text = clause_data["text"]
+        definition_hits = find_definition_hits(
+            query_text=query_text,
+            definitions_faiss=definitions_faiss,
+            definitions=definitions,
+            top_k=definition_top_k,
+            similarity_threshold=definition_similarity_threshold,
+        )
         matches = find_matches(
             clause_id=clause_id,
             query_text=query_text,
@@ -106,6 +156,7 @@ def analyze_pdf(
             contradiction_model_name=contradiction_model_name,
             contradiction_threshold=contradiction_threshold,
             run_contradiction_scoring=run_contradiction_scoring,
+            excluded_chunk_ids=definition_chunk_ids,
         )
         analysis_clauses.append(
             ClauseResult(
@@ -114,6 +165,7 @@ def analyze_pdf(
                 point_number=clause_data["point_number"],
                 text=query_text,
                 page_to_bbox=clause_data["page_to_bbox"],
+                definitions=definition_hits,
                 matches=matches,
             )
         )
@@ -126,7 +178,10 @@ def analyze_pdf(
         created_at=datetime.now(UTC).isoformat(),
         pdf_name=pdf_path.name,
         parameters={
+            "analysis_schema_version": ANALYSIS_SCHEMA_VERSION,
             "top_k": top_k,
+            "definition_top_k": definition_top_k,
+            "definition_similarity_threshold": definition_similarity_threshold,
             "max_clauses": max_clauses,
             "contradiction_model_name": contradiction_model_name,
             "contradiction_threshold": contradiction_threshold,
@@ -160,6 +215,72 @@ def chunk_to_clause(chunk: PdfChunk) -> dict:
     }
 
 
+def find_definition_hits(
+    query_text: str,
+    definitions_faiss,
+    definitions: dict,
+    top_k: int,
+    similarity_threshold: float,
+) -> list[DefinitionHit]:
+    if top_k <= 0:
+        return []
+
+    candidates = literal_definition_matches(query_text, definitions)
+    if definitions_faiss is not None:
+        candidates.extend(
+            item
+            for item in retrieve_top_definitions(
+                query_text=query_text,
+                faiss=definitions_faiss,
+                top_k=top_k,
+            )
+            if float(item.get("similarity", 0.0)) >= similarity_threshold
+        )
+
+    by_term: dict[str, DefinitionHit] = {}
+    for item in candidates:
+        meta_data = item.get("meta_data", {})
+        term = str(meta_data.get("term") or "").strip()
+        text = str(meta_data.get("definition_text") or "").strip()
+        if not term or not text:
+            continue
+
+        chunks = [str(chunk_id) for chunk_id in meta_data.get("source_chunk_ids", [])]
+        hit = DefinitionHit(
+            term=term,
+            text=text,
+            chunks=chunks,
+            source_articles=extract_articles_from_chunks(chunks),
+            similarity=float(item.get("similarity", 0.0)),
+            match_type=str(item.get("match_type") or "semantic"),
+        )
+        current = by_term.get(term)
+        if current is None or definition_hit_rank(hit) > definition_hit_rank(current):
+            by_term[term] = hit
+
+    return sorted(
+        by_term.values(),
+        key=lambda hit: (
+            hit.match_type != "literal",
+            -(hit.similarity or 0.0),
+            hit.term,
+        ),
+    )[:top_k]
+
+
+def definition_hit_rank(hit: DefinitionHit) -> tuple[int, float]:
+    return (1 if hit.match_type == "literal" else 0, hit.similarity or 0.0)
+
+
+def extract_articles_from_chunks(chunks: list[str]) -> list[str]:
+    articles = {
+        match.group(1)
+        for chunk_id in chunks
+        if (match := re.match(r"art:([^:]+):", chunk_id))
+    }
+    return sorted(articles)
+
+
 def find_matches(
     clause_id: str,
     query_text: str,
@@ -169,12 +290,22 @@ def find_matches(
     contradiction_model_name: str,  # kept for response payload compatibility
     contradiction_threshold: float,
     run_contradiction_scoring: bool,
+    excluded_chunk_ids: set[str] | frozenset[str] | None = None,
 ) -> list[MatchResult]:
-    retrieve_results = retrieve_top_k(query_text=query_text, faiss=faiss, top_k=top_k)
+    excluded_chunk_ids = excluded_chunk_ids or set()
+    retrieve_results = retrieve_top_k(
+        query_text=query_text,
+        faiss=faiss,
+        top_k=max(top_k, top_k * 4),
+    )
     matches: list[MatchResult] = []
 
-    for idx, item in enumerate(retrieve_results, start=1):
+    for item in retrieve_results:
         meta_data = item.get("meta_data", {})
+        chunk_id = str(meta_data.get("chunk_id") or "")
+        if chunk_id in excluded_chunk_ids:
+            continue
+
         norm_text = (
             meta_data.get("original_text")
             or meta_data.get("normalized_text")
@@ -198,7 +329,7 @@ def find_matches(
 
         matches.append(
             MatchResult(
-                match_id=f"{clause_id}-match-{idx}",
+                match_id=f"{clause_id}-match-{len(matches) + 1}",
                 similarity=float(item.get("similarity", 0.0)),
                 norm_text=norm_text,
                 hierarchy_path=list(meta_data.get("hierarchy_path", [])),
@@ -209,6 +340,8 @@ def find_matches(
                 auto_label=auto_label,
             )
         )
+        if len(matches) >= top_k:
+            break
 
     return matches
 

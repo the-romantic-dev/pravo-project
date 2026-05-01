@@ -116,6 +116,7 @@ def render_synced_pages_viewer(pages_payload: list[dict]) -> None:
                     "y_center_px": page_top + (y0 + y1) * 0.5,
                     "clause_id": item["clause_id"],
                     "clause_text": item["clause_text"],
+                    "definitions": item["definitions"],
                     "matches": item["matches"],
                 }
             )
@@ -185,6 +186,7 @@ def build_overlay_svg(
 def build_cards_html(annotations: list[dict]) -> str:
     parts: list[str] = []
     for item in annotations:
+        definition_html = build_definitions_html(item.get("definitions", []))
         match_parts: list[str] = []
         for idx, match in enumerate(item["matches"], start=1):
             match_parts.append(
@@ -212,11 +214,50 @@ def build_cards_html(annotations: list[dict]) -> str:
                 '<div class="tk-clause-head__label">Пункт договора в фокусе</div>'
                 f'<div class="tk-clause-head__text">{html.escape(item["clause_text"])}</div>'
                 '</div>'
+                + definition_html
                 + "".join(match_parts)
                 + '</div>'
             )
         )
     return "".join(parts)
+
+
+def build_definitions_html(definitions: list[dict]) -> str:
+    if not definitions:
+        return ""
+
+    chips = []
+    for definition in definitions:
+        details = "\n".join(
+            part
+            for part in [
+                definition.get("text", ""),
+                definition.get("source", ""),
+                f'Похожесть: {definition.get("similarity", "n/a")}',
+            ]
+            if part
+        )
+        chips.append(
+            (
+                '<span class="tk-definition-item">'
+                '<span class="tk-definition-chip">'
+                f'{html.escape(definition.get("term", ""))}'
+                '</span>'
+                '<span class="tk-definition-tooltip">'
+                f'<span class="tk-definition-tooltip__title">{html.escape(definition.get("term", ""))}</span>'
+                f'<span class="tk-definition-tooltip__text">{html.escape(details)}</span>'
+                '</span>'
+                '</span>'
+            )
+        )
+
+    return (
+        '<div class="tk-definitions">'
+        '<div class="tk-definitions__label">Соотносящиеся определения</div>'
+        '<div class="tk-definitions__chips">'
+        + "".join(chips)
+        + '</div></div>'
+    )
 
 
 def build_sync_script(
@@ -258,6 +299,100 @@ def build_sync_script(
   line-height:1.3;
   box-shadow:0 2px 8px rgba(0,0,0,.18);
   box-sizing:border-box;
+}}
+.tk-definitions {{
+  border:1px solid #29445a;
+  border-radius:8px;
+  padding:9px 10px;
+  margin:0 0 10px 0;
+  background:#0e1a2b;
+  color:#dbe7f3;
+  font-size:12px;
+  line-height:1.3;
+  overflow:visible;
+}}
+.tk-definitions__label {{
+  color:#9fb2c7;
+  font-size:11px;
+  font-weight:600;
+  margin-bottom:7px;
+}}
+.tk-definitions__chips {{
+  position:relative;
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  overflow:visible;
+}}
+.tk-definition-item {{
+  position:static;
+  display:inline-block;
+  max-width:100%;
+}}
+.tk-definition-chip {{
+  display:inline-flex;
+  align-items:center;
+  max-width:100%;
+  padding:3px 8px;
+  border:1px solid #64d6c6;
+  border-radius:999px;
+  background:rgba(20,184,166,.12);
+  color:#9ff3e7;
+  font-size:11px;
+  font-weight:700;
+  cursor:default;
+  transition:background .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease;
+}}
+.tk-definition-item:hover .tk-definition-chip {{
+  border-color:#99f6e4;
+  background:rgba(45,212,191,.2);
+  color:#ecfeff;
+  box-shadow:0 0 0 2px rgba(45,212,191,.12);
+}}
+.tk-definition-tooltip {{
+  pointer-events:none;
+  position:absolute;
+  left:0;
+  right:0;
+  top:calc(100% + 8px);
+  z-index:80;
+  max-height:240px;
+  overflow:auto;
+  padding:12px 14px;
+  border:1px solid #cbd5e1;
+  border-radius:8px;
+  background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);
+  color:#172033;
+  box-shadow:0 18px 42px rgba(0,0,0,.38), 0 0 0 1px rgba(15,23,42,.04);
+  font-size:12px;
+  font-weight:400;
+  line-height:1.5;
+  white-space:pre-wrap;
+  box-sizing:border-box;
+  opacity:0;
+  visibility:hidden;
+  transform:translateY(-4px) scale(.985);
+  transform-origin:top left;
+  transition:opacity .18s ease, transform .18s ease, visibility .18s ease;
+}}
+.tk-definition-tooltip__title {{
+  display:block;
+  margin-bottom:7px;
+  padding-bottom:6px;
+  border-bottom:1px solid #e2e8f0;
+  color:#0f172a;
+  font-weight:800;
+  font-size:13px;
+}}
+.tk-definition-tooltip__text {{
+  display:block;
+  color:#334155;
+}}
+.tk-definition-item:hover .tk-definition-tooltip {{
+  pointer-events:auto;
+  opacity:1;
+  visibility:visible;
+  transform:translateY(0) scale(1);
 }}
 .tk-match-card__header {{
   display:flex;

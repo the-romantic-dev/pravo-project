@@ -12,7 +12,7 @@ import streamlit as st
 from src.ui.controls import render_sidebar_controls
 from src.ui.pdf_viewer import show_pdf
 from src.ui.review import render_results, save_current_review
-from src.ui.services import analyze_pdf
+from src.ui.services import ANALYSIS_SCHEMA_VERSION, analyze_pdf
 
 
 def main() -> None:
@@ -48,6 +48,8 @@ def main() -> None:
             analysis = analyze_pdf(
                 pdf_path=temp_pdf,
                 top_k=controls.top_k,
+                definition_top_k=controls.definition_top_k,
+                definition_similarity_threshold=controls.definition_similarity_threshold,
                 max_clauses=None,
                 contradiction_threshold=controls.contradiction_threshold,
                 run_contradiction_scoring=controls.run_scoring,
@@ -58,6 +60,12 @@ def main() -> None:
         st.session_state["labels"] = {}
 
     analysis = st.session_state.get("analysis")
+    if analysis is not None and is_stale_analysis(analysis):
+        st.session_state.pop("analysis", None)
+        st.session_state["labels"] = {}
+        analysis = None
+        st.warning("Предыдущий результат анализа устарел после обновления пайплайна. Запустите анализ заново.")
+
     with st.expander("Просмотр PDF", expanded=True):
         show_pdf(
             pdf_bytes=pdf_bytes,
@@ -73,6 +81,11 @@ def main() -> None:
             st.success(f"Разметка сохранена: {saved_path.as_posix()}")
     else:
         st.warning("Нажмите «Запустить анализ», чтобы увидеть результаты.")
+
+
+def is_stale_analysis(analysis) -> bool:
+    parameters = getattr(analysis, "parameters", {}) or {}
+    return parameters.get("analysis_schema_version") != ANALYSIS_SCHEMA_VERSION
 
 
 if __name__ == "__main__":
