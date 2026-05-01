@@ -47,7 +47,7 @@ def main() -> None:
         with st.spinner("Выполняю поиск совпадений и оценку противоречий..."):
             analysis = analyze_pdf(
                 pdf_path=temp_pdf,
-                top_k=1,
+                top_k=controls.top_k,
                 max_clauses=None,
                 contradiction_threshold=controls.contradiction_threshold,
                 run_contradiction_scoring=controls.run_scoring,

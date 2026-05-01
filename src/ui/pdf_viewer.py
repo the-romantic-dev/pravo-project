@@ -73,14 +73,12 @@ def render_synced_pages_viewer(pages_payload: list[dict]) -> None:
         return
 
     page_gap = 22
-    right_panel_width = 430
     pane_gap = 14
     doc_width = max(p["display_width"] for p in pages_payload)
     wrapper_id = "sync-wrap-global"
     left_pane_id = "left-pane-global"
     right_pane_id = "right-pane-global"
     right_cards_id = "right-cards-global"
-    link_svg_id = "link-svg-global"
 
     pages_html_parts: list[str] = []
     annotations: list[dict] = []
@@ -116,10 +114,9 @@ def render_synced_pages_viewer(pages_payload: list[dict]) -> None:
                     "x1": x_offset + x1,
                     "y1": page_top + y1,
                     "y_center_px": page_top + (y0 + y1) * 0.5,
-                    "tk_ref": item["tk_ref"],
-                    "tk_text": item["tk_text"],
-                    "status_text": item["status_text"],
-                    "status_color": item["status_color"],
+                    "clause_id": item["clause_id"],
+                    "clause_text": item["clause_text"],
+                    "matches": item["matches"],
                 }
             )
 
@@ -131,23 +128,15 @@ def render_synced_pages_viewer(pages_payload: list[dict]) -> None:
         image_height=doc_height,
         annotations=annotations,
     )
-    cards_html = build_cards_html(
-        annotations=annotations,
-        card_width=right_panel_width - 20,
-    )
+    cards_html = build_cards_html(annotations=annotations)
     sync_script = build_sync_script(
-        wrapper_id=wrapper_id,
         left_pane_id=left_pane_id,
-        right_pane_id=right_pane_id,
         right_cards_id=right_cards_id,
-        link_svg_id=link_svg_id,
     )
 
     page_html = (
         f'<div id="{wrapper_id}" style="width:100%;height:min(84vh,920px);display:flex;gap:{pane_gap}px;'
         'border:1px solid #1f2d3d;border-radius:10px;background:#0b1220;padding:8px;box-sizing:border-box;position:relative;">'
-        f'<svg id="{link_svg_id}" style="position:absolute;left:0;top:0;width:100%;height:100%;'
-        'pointer-events:none;z-index:6;"></svg>'
         f'<div id="{left_pane_id}" style="flex:0 0 62%;overflow:auto;position:relative;border-radius:8px;background:#f8f9fa;">'
         f'<div style="position:relative;width:{doc_width}px;height:{doc_height}px;">'
         + "".join(pages_html_parts)
@@ -157,7 +146,8 @@ def render_synced_pages_viewer(pages_payload: list[dict]) -> None:
         '<div style="color:#e9ecef;font-size:13px;font-weight:600;margin:2px 4px 10px 4px;">'
         "Соответствующие нормы ТК"
         "</div>"
-        f'<div id="{right_cards_id}" style="position:relative;width:100%;height:calc(100% - 28px);overflow:hidden;">'
+        f'<div id="{right_cards_id}" style="width:100%;height:calc(100% - 28px);overflow-y:auto;overflow-x:hidden;'
+        'padding-right:4px;box-sizing:border-box;">'
         f"{cards_html}</div></div></div>{sync_script}"
     )
     st.components.v1.html(page_html, height=min(980, max(500, doc_height + 88)), scrolling=False)
@@ -192,38 +182,198 @@ def build_overlay_svg(
     )
 
 
-def build_cards_html(
-    annotations: list[dict],
-    card_width: int,
-) -> str:
+def build_cards_html(annotations: list[dict]) -> str:
     parts: list[str] = []
     for item in annotations:
+        match_parts: list[str] = []
+        for idx, match in enumerate(item["matches"], start=1):
+            match_parts.append(
+                (
+                    '<div class="tk-match-card">'
+                    '<div class="tk-match-card__header">'
+                    f'<span>{idx}. {html.escape(match["tk_ref"])}</span>'
+                    f'<span>sim {html.escape(match["similarity"])}</span>'
+                    '</div>'
+                    f'<div class="tk-match-card__text">{html.escape(match["tk_text"])}</div>'
+                    '<div class="tk-match-card__footer">'
+                    f'<span class="tk-status" style="background:{match["status_color"]}22;'
+                    f'color:{match["status_color"]};">{html.escape(match["status_text"])}</span>'
+                    f'<span class="tk-score">P(contr): {html.escape(match["contradiction_score"])}</span>'
+                    '</div>'
+                    '</div>'
+                )
+            )
+
         parts.append(
             (
-                f'<div id="card-{item["id"]}" data-ann-id="{item["id"]}" '
-                f'data-doc-y="{item["y_center_px"]:.2f}" '
-                f'style="position:absolute;left:0;top:0;width:{card_width}px;display:none;'
-                'border:1px solid #2a3b52;border-radius:10px;padding:10px 12px;'
-                'background:#111b2e;color:#e9ecef;font-size:12px;line-height:1.25;box-shadow:0 2px 8px rgba(0,0,0,.18);'
-                'transition:all .15s ease;box-sizing:border-box;">'
-                f'<div style="font-weight:600;margin-bottom:4px;">{html.escape(item["tk_ref"])}</div>'
-                f'<div style="color:#cfd8e3;margin-bottom:8px;">{html.escape(item["tk_text"])}</div>'
-                f'<span style="display:inline-block;padding:2px 8px;border-radius:999px;'
-                f'background:{item["status_color"]}22;color:{item["status_color"]};font-weight:600;">'
-                f'{html.escape(item["status_text"])}</span>'
-                "</div>"
+                f'<div id="group-{item["id"]}" class="tk-match-group" data-ann-id="{item["id"]}" '
+                f'data-doc-y="{item["y_center_px"]:.2f}">'
+                '<div class="tk-clause-head">'
+                '<div class="tk-clause-head__label">Пункт договора в фокусе</div>'
+                f'<div class="tk-clause-head__text">{html.escape(item["clause_text"])}</div>'
+                '</div>'
+                + "".join(match_parts)
+                + '</div>'
             )
         )
     return "".join(parts)
 
 
 def build_sync_script(
-    wrapper_id: str,
     left_pane_id: str,
-    right_pane_id: str,
     right_cards_id: str,
-    link_svg_id: str,
 ) -> str:
+    return f"""
+<style>
+.tk-match-group {{
+  display:none;
+}}
+.tk-match-group.active {{
+  display:block;
+}}
+.tk-clause-head {{
+  border:1px solid #243750;
+  border-radius:8px;
+  padding:10px 12px;
+  margin:0 0 10px 0;
+  background:#0b1424;
+  color:#dbe7f3;
+  font-size:12px;
+  line-height:1.35;
+}}
+.tk-clause-head__label {{
+  color:#9fb2c7;
+  font-size:11px;
+  font-weight:600;
+  margin-bottom:5px;
+}}
+.tk-match-card {{
+  border:1px solid #2a3b52;
+  border-radius:8px;
+  padding:10px 12px;
+  margin-bottom:10px;
+  background:#111b2e;
+  color:#e9ecef;
+  font-size:12px;
+  line-height:1.3;
+  box-shadow:0 2px 8px rgba(0,0,0,.18);
+  box-sizing:border-box;
+}}
+.tk-match-card__header {{
+  display:flex;
+  justify-content:space-between;
+  gap:8px;
+  color:#f8f9fa;
+  font-weight:700;
+  margin-bottom:6px;
+}}
+.tk-match-card__text {{
+  color:#cfd8e3;
+  margin-bottom:8px;
+}}
+.tk-match-card__footer {{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  flex-wrap:wrap;
+}}
+.tk-status {{
+  display:inline-block;
+  padding:2px 8px;
+  border-radius:999px;
+  font-weight:700;
+}}
+.tk-score {{
+  color:#9fb2c7;
+  font-size:11px;
+}}
+.active-box {{
+  stroke:#5c7cfa !important;
+  stroke-width:3.2 !important;
+  fill:rgba(92,124,250,0.12) !important;
+}}
+</style>
+<script>
+(function() {{
+  const left = document.getElementById("{left_pane_id}");
+  const rightCards = document.getElementById("{right_cards_id}");
+  if (!left || !rightCards) return;
+
+  const groups = Array.from(rightCards.querySelectorAll(".tk-match-group[data-ann-id]"));
+  const boxes = Array.from(left.querySelectorAll("[id^='box-'][data-ann-id]"));
+  if (!groups.length || !boxes.length) return;
+
+  const groupById = new Map(groups.map((group) => [group.dataset.annId, group]));
+  const groupsSorted = [...groups].sort(
+    (a, b) => parseFloat(a.dataset.docY || "0") - parseFloat(b.dataset.docY || "0")
+  );
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+  const docY = (group) => parseFloat(group.dataset.docY || "0");
+
+  let framePending = false;
+  let activeId = groupsSorted[0].dataset.annId;
+
+  function viewport() {{
+    const top = left.scrollTop;
+    const bottom = top + left.clientHeight;
+    return {{ top, bottom, center: (top + bottom) / 2 }};
+  }}
+
+  function nearestByCenter() {{
+    const vp = viewport();
+    const edgePx = Math.max(12, left.clientHeight * 0.05);
+    if (vp.top <= edgePx) return groupsSorted[0].dataset.annId;
+    if (left.scrollHeight - vp.bottom <= edgePx) return groupsSorted[groupsSorted.length - 1].dataset.annId;
+
+    let bestId = groupsSorted[0].dataset.annId;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const group of groupsSorted) {{
+      const dist = Math.abs(docY(group) - vp.center);
+      if (dist < bestDist) {{
+        bestDist = dist;
+        bestId = group.dataset.annId;
+      }}
+    }}
+    return bestId;
+  }}
+
+  function activate(id, alignToCenter) {{
+    if (!groupById.has(id)) return;
+    activeId = id;
+    groups.forEach((group) => group.classList.toggle("active", group.dataset.annId === id));
+    boxes.forEach((box) => box.classList.toggle("active-box", box.dataset.annId === id));
+    rightCards.scrollTop = 0;
+
+    if (!alignToCenter) return;
+    const group = groupById.get(id);
+    const target = docY(group) - left.clientHeight / 2;
+    left.scrollTop = clamp(target, 0, Math.max(0, left.scrollHeight - left.clientHeight));
+  }}
+
+  function refreshByScroll() {{
+    if (framePending) return;
+    framePending = true;
+    window.requestAnimationFrame(() => {{
+      framePending = false;
+      const nextId = nearestByCenter();
+      if (nextId !== activeId) activate(nextId, false);
+    }});
+  }}
+
+  left.addEventListener("scroll", refreshByScroll, {{ passive: true }});
+
+  boxes.forEach((box) => {{
+    box.style.cursor = "pointer";
+    box.style.pointerEvents = "all";
+    box.addEventListener("click", () => activate(box.dataset.annId, true));
+  }});
+
+  window.addEventListener("resize", () => activate(nearestByCenter(), false));
+  activate(activeId, false);
+}})();
+</script>
+"""
     return f"""
 <style>
 #{wrapper_id} .active-card {{

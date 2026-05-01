@@ -7,6 +7,7 @@ import streamlit as st
 
 @dataclass(slots=True)
 class SidebarControls:
+    top_k: int
     run_scoring: bool
     contradiction_threshold: float
     highlight_threshold: float
@@ -15,6 +16,13 @@ class SidebarControls:
 def render_sidebar_controls() -> SidebarControls:
     with st.sidebar:
         st.header("Параметры анализа")
+        top_k = st.slider(
+            "Количество норм ТК для пункта",
+            min_value=1,
+            max_value=20,
+            value=5,
+            step=1,
+        )
         run_scoring = st.checkbox(
             "Считать вероятность противоречия автоматически",
             value=True,
@@ -36,6 +44,7 @@ def render_sidebar_controls() -> SidebarControls:
         )
 
     return SidebarControls(
+        top_k=int(top_k),
         run_scoring=run_scoring,
         contradiction_threshold=float(contradiction_threshold),
         highlight_threshold=float(highlight_threshold),

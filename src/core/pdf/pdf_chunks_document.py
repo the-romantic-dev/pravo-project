@@ -1,3 +1,4 @@
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,20 @@ class PdfChunksDocument:
         for chunk in self.chunks:
             result.setdefault(chunk.heading, []).append(chunk)
         return result
+
+    def to_jsonl(self, jsonl_path: str | Path):
+        result = []
+        for chunk in self.chunks:
+            data = {}
+            data['heading'] = chunk.heading
+            data['point_number'] = chunk.point_number
+            data['text'] = chunk.text
+            data['normalized_text'] = chunk.normalized_text
+            result.append(data)
+        with open(jsonl_path, "w", encoding="utf-8") as f:
+            for item in result:
+                f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
 
 
 def normalize_text(text: str) -> str:
@@ -143,8 +158,8 @@ def pdf_to_chunks_by_heading(pdf_path: str | Path) -> dict[str, list[PdfChunk]]:
 
 
 if __name__ == '__main__':
-    pdf_path = Path('../../../data/pdf_examples/clear/TD4_clear.pdf')
+    pdf_path = Path('../../../data/pdf_examples/clear/TD1_clear.pdf')
     chunks_doc = pdf_to_chunks_document(pdf_path)
-
+    chunks_doc.to_jsonl('test_chunks2.jsonl')
     # for chunk in chunks_doc.chunks[-1]:
-    print(chunks_doc.chunks[-1])
+    # print(chunks_doc.chunks[-1])

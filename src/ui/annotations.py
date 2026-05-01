@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.ui.formatters import build_ref_for_card
+from src.ui.formatters import build_ref_for_card, format_score
 from src.ui.services import AnalysisResult
 
 
@@ -20,18 +20,27 @@ def build_annotations_by_page(
         if best_match.similarity < highlight_threshold:
             continue
 
-        tk_ref = build_ref_for_card(best_match)
-        status = map_status(best_match.auto_label)
-        tk_text = (best_match.norm_text or "").strip()
+        matches = []
+        for match in clause.matches:
+            status = map_status(match.auto_label)
+            matches.append(
+                {
+                    "tk_ref": build_ref_for_card(match),
+                    "tk_text": (match.norm_text or "").strip(),
+                    "similarity": f"{match.similarity:.3f}",
+                    "contradiction_score": format_score(match.contradiction_score),
+                    "status_text": status["text"],
+                    "status_color": status["color"],
+                }
+            )
 
         for page_num, bbox in clause.page_to_bbox.items():
             result.setdefault(page_num, []).append(
                 {
                     "bbox": bbox,
-                    "tk_ref": tk_ref,
-                    "tk_text": tk_text,
-                    "status_text": status["text"],
-                    "status_color": status["color"],
+                    "clause_id": clause.clause_id,
+                    "clause_text": clause.text,
+                    "matches": matches,
                 }
             )
 
