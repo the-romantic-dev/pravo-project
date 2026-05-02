@@ -46,6 +46,11 @@ def build_annotations_by_page(
                     "tk_ref": build_ref_for_card(match),
                     "tk_text": (match.norm_text or "").strip(),
                     "similarity": f"{match.similarity:.3f}",
+                    "rerank_score": (
+                        f"{match.rerank_score:.3f}"
+                        if match.rerank_score is not None
+                        else ""
+                    ),
                     "contradiction_score": format_score(match.contradiction_score),
                     "status_text": status["text"],
                     "status_color": status["color"],

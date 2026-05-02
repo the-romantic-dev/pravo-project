@@ -39,10 +39,16 @@ def render_results(analysis: AnalysisResult) -> None:
 
     labels = st.session_state.setdefault("labels", {})
     for match in clause.matches:
+        rerank = (
+            f"  **Rerank:** `{match.rerank_score:.3f}`"
+            if match.rerank_score is not None
+            else ""
+        )
         with st.container(border=True):
             st.markdown(
                 (
                     f"**Схожесть:** `{match.similarity:.3f}`  "
+                    f"{rerank}  "
                     f"**Авто-лейбл:** `{match.auto_label}`  "
                     f"**P(contradiction):** `{format_score(match.contradiction_score)}`"
                 )

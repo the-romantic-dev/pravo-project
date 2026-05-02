@@ -189,12 +189,18 @@ def build_cards_html(annotations: list[dict]) -> str:
         definition_html = build_definitions_html(item.get("definitions", []))
         match_parts: list[str] = []
         for idx, match in enumerate(item["matches"], start=1):
+            rerank_html = (
+                f'<span>rerank {html.escape(match["rerank_score"])}</span>'
+                if match.get("rerank_score")
+                else ""
+            )
             match_parts.append(
                 (
                     '<div class="tk-match-card">'
                     '<div class="tk-match-card__header">'
                     f'<span>{idx}. {html.escape(match["tk_ref"])}</span>'
                     f'<span>sim {html.escape(match["similarity"])}</span>'
+                    f"{rerank_html}"
                     '</div>'
                     f'<div class="tk-match-card__text">{html.escape(match["tk_text"])}</div>'
                     '<div class="tk-match-card__footer">'

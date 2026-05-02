@@ -2,6 +2,7 @@ import time
 from functools import lru_cache
 from transformers import pipeline, TextClassificationPipeline
 from src.config import nli_model
+from src.core.util.device import get_transformers_device
 
 
 @lru_cache(maxsize=1)
@@ -10,7 +11,8 @@ def get_nli_pipeline():
         "text-classification",
         model=nli_model,
         tokenizer=nli_model,
-        top_k=None
+        top_k=None,
+        device=get_transformers_device(),
     )
 
 

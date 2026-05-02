@@ -15,7 +15,7 @@ from src.config import (
 )
 from src.core.rag.index.build_definitions_index import build_aliases
 from src.core.rag.index.embeddings import E5Embeddings
-from src.core.retrieve.retrieve import load_vectorstore
+from src.core.retrieve.retrieve import l2_score_to_cosine_similarity, load_vectorstore
 
 GENERIC_LITERAL_TERMS = {
     "Работник",
@@ -59,7 +59,8 @@ def retrieve_top_definitions(
         result.append(
             {
                 "meta_data": meta_data,
-                "similarity": 1 - score,
+                "similarity": l2_score_to_cosine_similarity(score),
+                "distance": float(score),
             }
         )
     return result

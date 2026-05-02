@@ -10,7 +10,9 @@ from typing import Callable
 from uuid import uuid4
 
 from transformers import TextClassificationPipeline
+from sentence_transformers import CrossEncoder
 
+from src import config
 from src.core.classification.contradiction import contradiction_score, get_nli_pipeline
 from src.core.pdf.pdf_chunks_document import PdfChunk, pdf_to_chunks_document
 from src.core.retrieve.definitions import (
@@ -21,12 +23,18 @@ from src.core.retrieve.definitions import (
     retrieve_top_definitions,
 )
 from src.core.retrieve.retrieve import load_fiass, retrieve_top_k
+from src.core.retrieve.rerank import load_reranker, rerank_top_k
 
 DEFAULT_CONTRADICTION_MODEL = "cointegrated/rubert-base-cased-nli-threeway"
 DEFAULT_CONTRADICTION_THRESHOLD = 0.5
 DEFAULT_DEFINITION_TOP_K = 4
 DEFAULT_DEFINITION_SIMILARITY_THRESHOLD = 0.72
-ANALYSIS_SCHEMA_VERSION = 2
+DEFAULT_RUN_RERANKING = True
+DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
+DEFAULT_RERANKER_BATCH_SIZE = 16
+DEFAULT_RERANKER_MAX_LENGTH = 512
+DEFAULT_RERANKER_CANDIDATE_MULTIPLIER = 10
+ANALYSIS_SCHEMA_VERSION = 3
 BBox = tuple[float, float, float, float]
 
 
@@ -39,6 +47,7 @@ class MatchResult:
     article_number: str
     part_number: str
     subpart_number: str
+    rerank_score: float | None
     contradiction_score: float | None
     auto_label: str
 
@@ -114,6 +123,36 @@ def get_cached_nli() -> TextClassificationPipeline:
     return get_nli_pipeline()
 
 
+@lru_cache(maxsize=1)
+def get_cached_reranker() -> CrossEncoder:
+    return load_reranker(
+        get_reranker_model_name(),
+        max_length=get_reranker_max_length(),
+    )
+
+
+def get_reranker_model_name() -> str:
+    return str(getattr(config, "reranker_model", DEFAULT_RERANKER_MODEL))
+
+
+def get_reranker_batch_size() -> int:
+    return int(getattr(config, "reranker_batch_size", DEFAULT_RERANKER_BATCH_SIZE))
+
+
+def get_reranker_max_length() -> int:
+    return int(getattr(config, "reranker_max_length", DEFAULT_RERANKER_MAX_LENGTH))
+
+
+def get_reranker_candidate_multiplier() -> int:
+    return int(
+        getattr(
+            config,
+            "reranker_candidate_multiplier",
+            DEFAULT_RERANKER_CANDIDATE_MULTIPLIER,
+        )
+    )
+
+
 def analyze_pdf(
     pdf_path: Path,
     top_k: int = 3,
@@ -123,6 +162,7 @@ def analyze_pdf(
     contradiction_model_name: str = DEFAULT_CONTRADICTION_MODEL,
     contradiction_threshold: float = DEFAULT_CONTRADICTION_THRESHOLD,
     run_contradiction_scoring: bool = True,
+    run_reranking: bool = DEFAULT_RUN_RERANKING,
     progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> AnalysisResult:
     clauses = extract_clauses(pdf_path, max_clauses=max_clauses)
@@ -133,6 +173,7 @@ def analyze_pdf(
     definitions = get_cached_definitions() if definition_top_k > 0 else {}
     definition_chunk_ids = get_cached_definition_chunk_ids()
     nli = get_cached_nli() if run_contradiction_scoring else None
+    reranker = get_cached_reranker() if run_reranking else None
 
     for idx, clause_data in enumerate(clauses, start=1):
         if progress_callback is not None:
@@ -156,6 +197,8 @@ def analyze_pdf(
             contradiction_model_name=contradiction_model_name,
             contradiction_threshold=contradiction_threshold,
             run_contradiction_scoring=run_contradiction_scoring,
+            reranker=reranker,
+            run_reranking=run_reranking,
             excluded_chunk_ids=definition_chunk_ids,
         )
         analysis_clauses.append(
@@ -186,6 +229,8 @@ def analyze_pdf(
             "contradiction_model_name": contradiction_model_name,
             "contradiction_threshold": contradiction_threshold,
             "run_contradiction_scoring": run_contradiction_scoring,
+            "reranker_model": get_reranker_model_name() if run_reranking else None,
+            "run_reranking": run_reranking,
         },
         clauses=analysis_clauses,
     )
@@ -290,14 +335,35 @@ def find_matches(
     contradiction_model_name: str,  # kept for response payload compatibility
     contradiction_threshold: float,
     run_contradiction_scoring: bool,
+    reranker: CrossEncoder | None = None,
+    run_reranking: bool = DEFAULT_RUN_RERANKING,
     excluded_chunk_ids: set[str] | frozenset[str] | None = None,
 ) -> list[MatchResult]:
     excluded_chunk_ids = excluded_chunk_ids or set()
+    reranker_candidate_multiplier = get_reranker_candidate_multiplier()
+    candidate_count = (
+        max(top_k, top_k * reranker_candidate_multiplier)
+        if run_reranking and reranker is not None
+        else max(top_k, top_k * 4)
+    )
     retrieve_results = retrieve_top_k(
         query_text=query_text,
         faiss=faiss,
-        top_k=max(top_k, top_k * 4),
+        top_k=candidate_count,
     )
+    retrieve_results = [
+        item
+        for item in retrieve_results
+        if str(item.get("meta_data", {}).get("chunk_id") or "") not in excluded_chunk_ids
+    ]
+    if run_reranking and reranker is not None:
+        retrieve_results = rerank_top_k(
+            query_text=query_text,
+            retrieve_results=retrieve_results,
+            reranker=reranker,
+            top_k=top_k,
+            batch_size=get_reranker_batch_size(),
+        )
     matches: list[MatchResult] = []
 
     for item in retrieve_results:
@@ -336,6 +402,11 @@ def find_matches(
                 article_number=str(meta_data.get("article_number", "")),
                 part_number=str(meta_data.get("part_number", "")),
                 subpart_number=str(meta_data.get("subpart_number", "")),
+                rerank_score=(
+                    float(item["rerank_score"])
+                    if item.get("rerank_score") is not None
+                    else None
+                ),
                 contradiction_score=score,
                 auto_label=auto_label,
             )

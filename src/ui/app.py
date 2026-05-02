@@ -53,6 +53,7 @@ def main() -> None:
                 max_clauses=None,
                 contradiction_threshold=controls.contradiction_threshold,
                 run_contradiction_scoring=controls.run_scoring,
+                run_reranking=controls.run_reranking,
                 progress_callback=on_progress,
             )
         progress.progress(1.0, text="Анализ завершен")

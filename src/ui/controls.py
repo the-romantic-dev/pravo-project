@@ -10,6 +10,7 @@ class SidebarControls:
     top_k: int
     definition_top_k: int
     definition_similarity_threshold: float
+    run_reranking: bool
     run_scoring: bool
     contradiction_threshold: float
     highlight_threshold: float
@@ -40,6 +41,10 @@ def render_sidebar_controls() -> SidebarControls:
             step=0.01,
             disabled=definition_top_k == 0,
         )
+        run_reranking = st.checkbox(
+            "Использовать reranker",
+            value=True,
+        )
         run_scoring = st.checkbox(
             "Считать вероятность противоречия автоматически",
             value=True,
@@ -64,6 +69,7 @@ def render_sidebar_controls() -> SidebarControls:
         top_k=int(top_k),
         definition_top_k=int(definition_top_k),
         definition_similarity_threshold=float(definition_similarity_threshold),
+        run_reranking=run_reranking,
         run_scoring=run_scoring,
         contradiction_threshold=float(contradiction_threshold),
         highlight_threshold=float(highlight_threshold),

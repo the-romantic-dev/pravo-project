@@ -6,6 +6,11 @@ from src.config import fiass_index_dir, rag_embedding_model, rag_embedding_batch
 from src.core.rag.index.embeddings import E5Embeddings
 
 
+def l2_score_to_cosine_similarity(score: float) -> float:
+    similarity = 1 - float(score) / 2
+    return max(-1.0, min(1.0, similarity))
+
+
 def load_fiass() -> FAISS:
     embeddings = E5Embeddings(rag_embedding_model, batch_size=rag_embedding_batch_size)
     return load_vectorstore(fiass_index_dir, embeddings)
@@ -19,13 +24,14 @@ def retrieve_top_k(
     search_data = faiss.similarity_search_with_score(query_text, k=top_k)
     result = []
     for doc, score in search_data:
-        similarity = 1 - score
+        similarity = l2_score_to_cosine_similarity(score)
         normalized_text = doc.page_content
         meta_data = doc.metadata.copy()
         meta_data['normalized_text'] = normalized_text
         result.append({
             'meta_data': meta_data,
-            'similarity': similarity
+            'similarity': similarity,
+            'distance': float(score),
         })
     return result
 
