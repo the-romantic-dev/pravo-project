@@ -14,6 +14,10 @@ from sentence_transformers import CrossEncoder
 
 from src import config
 from src.core.classification.contradiction import contradiction_score, get_nli_pipeline
+from src.core.document_checks.requirements import (
+    RequirementCheck,
+    analyze_contract_requirements,
+)
 from src.core.pdf.pdf_chunks_document import PdfChunk, pdf_to_chunks_document
 from src.core.retrieve.definitions import (
     literal_definition_matches,
@@ -34,7 +38,7 @@ DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 DEFAULT_RERANKER_BATCH_SIZE = 16
 DEFAULT_RERANKER_MAX_LENGTH = 512
 DEFAULT_RERANKER_CANDIDATE_MULTIPLIER = 10
-ANALYSIS_SCHEMA_VERSION = 3
+ANALYSIS_SCHEMA_VERSION = 4
 BBox = tuple[float, float, float, float]
 
 
@@ -79,6 +83,7 @@ class AnalysisResult:
     created_at: str
     pdf_name: str
     parameters: dict
+    document_checks: list[RequirementCheck]
     clauses: list[ClauseResult]
 
     def to_dict(self) -> dict:
@@ -166,6 +171,8 @@ def analyze_pdf(
     progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> AnalysisResult:
     clauses = extract_clauses(pdf_path, max_clauses=max_clauses)
+    raw_document = pdf_to_chunks_document(pdf_path, cleanup=False)
+    document_checks = analyze_contract_requirements(raw_document.chunks)
     analysis_clauses: list[ClauseResult] = []
     total = len(clauses)
     faiss = get_cached_faiss()
@@ -232,6 +239,7 @@ def analyze_pdf(
             "reranker_model": get_reranker_model_name() if run_reranking else None,
             "run_reranking": run_reranking,
         },
+        document_checks=document_checks,
         clauses=analysis_clauses,
     )
 

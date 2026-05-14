@@ -141,7 +141,7 @@ def paragraph_to_chunks(paragraph: PdfParagraph) -> list[PdfChunk]:
     return result
 
 
-def pdf_to_chunks_document(pdf_path: str | Path) -> PdfChunksDocument:
+def pdf_to_chunks_document(pdf_path: str | Path, cleanup: bool = True) -> PdfChunksDocument:
     lines_doc = PdfLinesDocument.from_pdf(pdf_path)
     paragraphs_doc = PdfParagraphsDocument.from_lines_document(lines_doc)
 
@@ -149,7 +149,8 @@ def pdf_to_chunks_document(pdf_path: str | Path) -> PdfChunksDocument:
     for paragraph in paragraphs_doc.paragraphs:
         chunks.extend(paragraph_to_chunks(paragraph))
 
-    chunks = cleanup_chunks(chunks)
+    if cleanup:
+        chunks = cleanup_chunks(chunks)
     return PdfChunksDocument(chunks=chunks)
 
 

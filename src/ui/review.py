@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import html
+import re
 from pathlib import Path
 
 import streamlit as st
 
 from src.ui.formatters import build_ref, format_score, short_text
-from src.ui.services import AnalysisResult, DefinitionHit, save_review
+from src.ui.services import AnalysisResult, DefinitionHit, RequirementCheck, save_review
 
 DEFAULT_OUTPUT_DIR = Path("artifacts") / "ui_annotations"
 
 
 def render_results(analysis: AnalysisResult) -> None:
+    render_document_checks(analysis.document_checks)
+    st.divider()
+
     clause_options = [
         f"{clause.clause_id} | {clause.section} | {short_text(clause.text, limit=90)}"
         for clause in analysis.clauses
@@ -81,6 +85,95 @@ def render_results(analysis: AnalysisResult) -> None:
                 "manual_label": selected_label,
                 "comment": comment,
             }
+
+
+def render_document_checks(checks: list[RequirementCheck]) -> None:
+    st.subheader("Обязательные условия договора")
+    if not checks:
+        st.info("Чеклист обязательных условий не сформирован.")
+        return
+
+    problem_statuses = {"missing", "incomplete", "needs_review"}
+    active_checks = [check for check in checks if check.status != "not_applicable"]
+    present_count = sum(check.status == "present" for check in active_checks)
+    problem_count = sum(check.status in problem_statuses for check in active_checks)
+    skipped_count = sum(check.status == "not_applicable" for check in checks)
+
+    col_present, col_problem, col_skipped = st.columns(3)
+    col_present.metric("Найдено", present_count)
+    col_problem.metric("Требует внимания", problem_count)
+    col_skipped.metric("Не применимо", skipped_count)
+
+    problem_checks = [check for check in checks if check.status in problem_statuses]
+    if problem_checks:
+        st.warning(
+            "Есть обязательные условия, которые не найдены или выглядят незаполненными."
+        )
+    else:
+        st.success("Все применимые обязательные условия из чеклиста найдены.")
+
+    status_order = {
+        "missing": 0,
+        "incomplete": 1,
+        "needs_review": 2,
+        "present": 3,
+        "not_applicable": 4,
+    }
+    for check in sorted(checks, key=lambda item: (status_order.get(item.status, 9), item.title)):
+        status = requirement_status_view(check.status)
+        label = f"{status['label']} · {check.title}"
+        with st.expander(label, expanded=check.status in problem_statuses):
+            st.caption(check.description)
+            st.markdown(f"**Статус:** {status['label']}")
+            st.write(check.note)
+            source = build_requirement_source(check)
+            if source:
+                st.caption(source)
+
+            if not check.matches:
+                continue
+
+            st.markdown("**Найденные пункты договора:**")
+            for match in check.matches[:5]:
+                point = f", пункт {match.point_number}" if match.point_number else ""
+                st.markdown(f"**{match.section}{point}**")
+                st.write(match.text)
+                if match.has_placeholder:
+                    st.caption("Есть признаки незаполненного шаблонного поля.")
+
+            if len(check.matches) > 5:
+                st.caption(f"Показано 5 из {len(check.matches)} совпадений.")
+
+
+def requirement_status_view(status: str) -> dict[str, str]:
+    labels = {
+        "present": "найдено",
+        "missing": "не найдено",
+        "incomplete": "незаполнено",
+        "needs_review": "проверить",
+        "not_applicable": "не применимо",
+    }
+    return {"label": labels.get(status, status)}
+
+
+def build_requirement_source(check: RequirementCheck) -> str:
+    refs = [format_source_chunk(chunk_id) for chunk_id in check.source_chunks]
+    refs = [ref for ref in refs if ref]
+    if not refs:
+        return ""
+    return "Источник: " + ", ".join(refs)
+
+
+def format_source_chunk(chunk_id: str) -> str:
+    if chunk_id.endswith(":*"):
+        article = chunk_id.removeprefix("art:").removesuffix(":*")
+        return f"ст. {article}"
+
+    match = re.match(r"art:([^:]+):part:([^:]+):sub:([^:]+)", chunk_id)
+    if not match:
+        return chunk_id
+    article, part, subpart = match.groups()
+    return f"ст. {article}, ч. {part}, п. {subpart}"
 
 
 def render_definition_chips(definitions: list[DefinitionHit]) -> None:
