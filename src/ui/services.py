@@ -13,12 +13,12 @@ from transformers import TextClassificationPipeline
 from sentence_transformers import CrossEncoder
 
 from src import config
-from src.core.classification.contradiction import contradiction_score, get_nli_pipeline
+from src.core.classification.contradiction import contradiction_scores, get_nli_pipeline
 from src.core.document_checks.requirements import (
     RequirementCheck,
     analyze_contract_requirements,
 )
-from src.core.pdf.pdf_chunks_document import PdfChunk, pdf_to_chunks_document
+from src.core.pdf.pdf_chunks_document import PdfChunk, cleanup_chunks, pdf_to_chunks_document
 from src.core.retrieve.definitions import (
     literal_definition_matches,
     load_definition_chunk_ids,
@@ -37,8 +37,9 @@ DEFAULT_RUN_RERANKING = True
 DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 DEFAULT_RERANKER_BATCH_SIZE = 16
 DEFAULT_RERANKER_MAX_LENGTH = 512
-DEFAULT_RERANKER_CANDIDATE_MULTIPLIER = 10
-ANALYSIS_SCHEMA_VERSION = 4
+DEFAULT_RERANKER_CANDIDATE_MULTIPLIER = 4
+DEFAULT_NLI_BATCH_SIZE = 16
+ANALYSIS_SCHEMA_VERSION = 8
 BBox = tuple[float, float, float, float]
 
 
@@ -158,6 +159,10 @@ def get_reranker_candidate_multiplier() -> int:
     )
 
 
+def get_nli_batch_size() -> int:
+    return int(getattr(config, "nli_batch_size", DEFAULT_NLI_BATCH_SIZE))
+
+
 def analyze_pdf(
     pdf_path: Path,
     top_k: int = 3,
@@ -170,8 +175,8 @@ def analyze_pdf(
     run_reranking: bool = DEFAULT_RUN_RERANKING,
     progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> AnalysisResult:
-    clauses = extract_clauses(pdf_path, max_clauses=max_clauses)
     raw_document = pdf_to_chunks_document(pdf_path, cleanup=False)
+    clauses = chunks_to_clauses(cleanup_chunks(raw_document.chunks), max_clauses=max_clauses)
     document_checks = analyze_contract_requirements(raw_document.chunks)
     analysis_clauses: list[ClauseResult] = []
     total = len(clauses)
@@ -237,7 +242,9 @@ def analyze_pdf(
             "contradiction_threshold": contradiction_threshold,
             "run_contradiction_scoring": run_contradiction_scoring,
             "reranker_model": get_reranker_model_name() if run_reranking else None,
+            "reranker_candidate_multiplier": get_reranker_candidate_multiplier() if run_reranking else None,
             "run_reranking": run_reranking,
+            "nli_batch_size": get_nli_batch_size() if run_contradiction_scoring else None,
         },
         document_checks=document_checks,
         clauses=analysis_clauses,
@@ -246,9 +253,16 @@ def analyze_pdf(
 
 def extract_clauses(pdf_path: Path, max_clauses: int | None = 40) -> list[dict]:
     chunks_document = pdf_to_chunks_document(pdf_path)
+    return chunks_to_clauses(chunks_document.chunks, max_clauses=max_clauses)
+
+
+def chunks_to_clauses(
+    chunks: list[PdfChunk],
+    max_clauses: int | None = 40,
+) -> list[dict]:
     clauses: list[dict] = []
 
-    for chunk in chunks_document.chunks:
+    for chunk in chunks:
         if not chunk.text.strip():
             continue
 
@@ -385,22 +399,6 @@ def find_matches(
             or meta_data.get("normalized_text")
             or ""
         ).strip()
-        score = None
-        auto_label = "not_scored"
-
-        if run_contradiction_scoring and norm_text and nli is not None:
-            score = contradiction_score(
-                nli,
-                query_text,
-                norm_text,
-                bidirectional=True,
-            )
-            auto_label = (
-                "contradiction"
-                if score >= contradiction_threshold
-                else "not_contradiction"
-            )
-
         matches.append(
             MatchResult(
                 match_id=f"{clause_id}-match-{len(matches) + 1}",
@@ -415,12 +413,44 @@ def find_matches(
                     if item.get("rerank_score") is not None
                     else None
                 ),
-                contradiction_score=score,
-                auto_label=auto_label,
+                contradiction_score=None,
+                auto_label="not_scored",
             )
         )
         if len(matches) >= top_k:
             break
+
+    if run_contradiction_scoring and nli is not None:
+        scoreable_indexes = [
+            index
+            for index, match in enumerate(matches)
+            if match.norm_text
+        ]
+        if scoreable_indexes:
+            scores = contradiction_scores(
+                nli,
+                [(query_text, matches[index].norm_text) for index in scoreable_indexes],
+                bidirectional=True,
+                batch_size=get_nli_batch_size(),
+            )
+            for index, score in zip(scoreable_indexes, scores, strict=False):
+                match = matches[index]
+                matches[index] = MatchResult(
+                    match_id=match.match_id,
+                    similarity=match.similarity,
+                    norm_text=match.norm_text,
+                    hierarchy_path=match.hierarchy_path,
+                    article_number=match.article_number,
+                    part_number=match.part_number,
+                    subpart_number=match.subpart_number,
+                    rerank_score=match.rerank_score,
+                    contradiction_score=score,
+                    auto_label=(
+                        "contradiction"
+                        if score >= contradiction_threshold
+                        else "not_contradiction"
+                    ),
+                )
 
     return matches
 

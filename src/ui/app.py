@@ -11,7 +11,7 @@ import streamlit as st
 
 from src.ui.controls import render_sidebar_controls
 from src.ui.pdf_viewer import show_pdf
-from src.ui.review import render_results, save_current_review
+from src.ui.review import render_document_checks, render_results, save_current_review
 from src.ui.services import ANALYSIS_SCHEMA_VERSION, analyze_pdf
 
 
@@ -19,6 +19,7 @@ def main() -> None:
     st.set_page_config(
         page_title="TKRF: проверка противоречий",
         layout="wide",
+        initial_sidebar_state="collapsed",
     )
     st.title("Проверка противоречий документа с нормами ТК РФ")
 
@@ -66,6 +67,10 @@ def main() -> None:
         st.session_state["labels"] = {}
         analysis = None
         st.warning("Предыдущий результат анализа устарел после обновления пайплайна. Запустите анализ заново.")
+
+    if analysis:
+        render_document_checks(analysis)
+        st.divider()
 
     with st.expander("Просмотр PDF", expanded=True):
         show_pdf(

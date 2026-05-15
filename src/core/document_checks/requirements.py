@@ -45,6 +45,7 @@ class RequirementMatch:
     section: str
     point_number: str | None
     text: str
+    page_to_bbox: dict[int, tuple[float, float, float, float]]
     matched_patterns: list[str]
     has_placeholder: bool
 
@@ -81,7 +82,7 @@ def analyze_contract_requirements(
                     source_chunks=requirement.source_chunks,
                     required_type=requirement.required_type,
                     status="not_applicable",
-                    note="Условие применения не найдено в договоре.",
+                    note="Не применимо к данному договору",
                     matches=[],
                 )
             )
@@ -138,6 +139,7 @@ def prepare_chunks(chunks: list[PdfChunk]) -> list[dict[str, Any]]:
                 "section": chunk.heading,
                 "point_number": chunk.point_number,
                 "text": text,
+                "page_to_bbox": chunk.page_to_bbox,
                 "normalized_text": normalized,
                 "search_text": normalize_text(f"{chunk.heading} {text}"),
             }
@@ -171,6 +173,7 @@ def find_requirement_matches(
                 section=str(chunk["section"]),
                 point_number=chunk["point_number"],
                 text=str(chunk["text"]),
+                page_to_bbox=chunk["page_to_bbox"],
                 matched_patterns=matched_patterns,
                 has_placeholder=has_placeholder(str(chunk["text"])),
             )
@@ -187,12 +190,6 @@ def requirement_status(
         if requirement.required_type == "conditional":
             return "missing", "Есть признаки применимости условия, но подходящий пункт не найден."
         return "missing", "Подходящий пункт в договоре не найден."
-
-    if all(match.has_placeholder for match in matches):
-        return "incomplete", "Пункт найден, но выглядит незаполненным или шаблонным."
-
-    if any(match.has_placeholder for match in matches):
-        return "needs_review", "Пункт найден, но часть совпадений содержит незаполненные шаблонные поля."
 
     return "present", "Подходящий пункт найден."
 

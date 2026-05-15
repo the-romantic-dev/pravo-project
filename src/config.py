@@ -14,6 +14,7 @@ model_device = "auto"
 reranker_model = "BAAI/bge-reranker-v2-m3"
 reranker_batch_size = 16
 reranker_max_length = 512
-reranker_candidate_multiplier = 10
+reranker_candidate_multiplier = 4
 
 nli_model = "cointegrated/rubert-base-cased-nli-threeway"
+nli_batch_size = 16

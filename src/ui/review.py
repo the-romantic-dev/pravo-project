@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 import html
+import json
 import re
+from functools import lru_cache
 from pathlib import Path
 
 import streamlit as st
 
+from src.config import rag_chunks_path
 from src.ui.formatters import build_ref, format_score, short_text
 from src.ui.services import AnalysisResult, DefinitionHit, RequirementCheck, save_review
 
 DEFAULT_OUTPUT_DIR = Path("artifacts") / "ui_annotations"
+CLAUSE_SELECT_KEY = "selected_clause_index"
 
 
 def render_results(analysis: AnalysisResult) -> None:
-    render_document_checks(analysis.document_checks)
-    st.divider()
-
     clause_options = [
         f"{clause.clause_id} | {clause.section} | {short_text(clause.text, limit=90)}"
         for clause in analysis.clauses
@@ -24,10 +25,15 @@ def render_results(analysis: AnalysisResult) -> None:
         st.error("Не удалось извлечь пункты из PDF.")
         return
 
+    valid_indexes = set(range(len(clause_options)))
+    if st.session_state.get(CLAUSE_SELECT_KEY) not in valid_indexes:
+        st.session_state[CLAUSE_SELECT_KEY] = 0
+
     selected_idx = st.selectbox(
         "Пункт документа",
         options=list(range(len(clause_options))),
         format_func=lambda idx: clause_options[idx],
+        key=CLAUSE_SELECT_KEY,
     )
     clause = analysis.clauses[selected_idx]
 
@@ -87,73 +93,286 @@ def render_results(analysis: AnalysisResult) -> None:
             }
 
 
-def render_document_checks(checks: list[RequirementCheck]) -> None:
-    st.subheader("Обязательные условия договора")
+def render_document_checks(analysis: AnalysisResult) -> None:
+    checks = analysis.document_checks
     if not checks:
-        st.info("Чеклист обязательных условий не сформирован.")
         return
 
-    problem_statuses = {"missing", "incomplete", "needs_review"}
+    problem_statuses = {"missing"}
     active_checks = [check for check in checks if check.status != "not_applicable"]
     present_count = sum(check.status == "present" for check in active_checks)
     problem_count = sum(check.status in problem_statuses for check in active_checks)
     skipped_count = sum(check.status == "not_applicable" for check in checks)
 
-    col_present, col_problem, col_skipped = st.columns(3)
-    col_present.metric("Найдено", present_count)
-    col_problem.metric("Требует внимания", problem_count)
-    col_skipped.metric("Не применимо", skipped_count)
-
-    problem_checks = [check for check in checks if check.status in problem_statuses]
-    if problem_checks:
-        st.warning(
-            "Есть обязательные условия, которые не найдены или выглядят незаполненными."
-        )
-    else:
-        st.success("Все применимые обязательные условия из чеклиста найдены.")
-
     status_order = {
-        "missing": 0,
-        "incomplete": 1,
-        "needs_review": 2,
-        "present": 3,
-        "not_applicable": 4,
+        "present": 0,
+        "missing": 1,
+        "not_applicable": 3,
     }
-    for check in sorted(checks, key=lambda item: (status_order.get(item.status, 9), item.title)):
+    compact_checks = sorted(
+        checks,
+        key=lambda item: (status_order.get(item.status, 9), item.title),
+    )
+
+    chips = []
+    for check in compact_checks:
         status = requirement_status_view(check.status)
-        label = f"{status['label']} · {check.title}"
-        with st.expander(label, expanded=check.status in problem_statuses):
-            st.caption(check.description)
-            st.markdown(f"**Статус:** {status['label']}")
-            st.write(check.note)
-            source = build_requirement_source(check)
-            if source:
-                st.caption(source)
+        chips.append(
+            (
+                f'<span class="doc-check-item doc-check-item--{check.status}" tabindex="0">'
+                f'<span class="doc-check-item__label">'
+                f'{html.escape(status["mark"])} {html.escape(check.title)}'
+                "</span>"
+                f'<span class="doc-check-tooltip">'
+                f'{build_requirement_tooltip_html(check)}'
+                "</span>"
+                "</span>"
+            )
+        )
 
-            if not check.matches:
-                continue
-
-            st.markdown("**Найденные пункты договора:**")
-            for match in check.matches[:5]:
-                point = f", пункт {match.point_number}" if match.point_number else ""
-                st.markdown(f"**{match.section}{point}**")
-                st.write(match.text)
-                if match.has_placeholder:
-                    st.caption("Есть признаки незаполненного шаблонного поля.")
-
-            if len(check.matches) > 5:
-                st.caption(f"Показано 5 из {len(check.matches)} совпадений.")
+    st.markdown(
+        (
+            """
+        <style>
+        .doc-check-panel {
+            margin: 0 0 12px 0;
+        }
+        .doc-check-panel__header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            margin: 0 0 8px 0;
+        }
+        .doc-check-panel__title {
+            font-weight: 700;
+            color: inherit;
+        }
+        .doc-check-panel__summary {
+            color: #7d8593;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+        .doc-check-row {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            padding: 2px 0 12px 0;
+        }
+        .doc-check-item {
+            position: relative;
+            min-width: 0;
+            min-height: 34px;
+            box-sizing: border-box;
+            padding: 7px 11px;
+            border: 1px solid #d7dde6;
+            border-radius: 8px;
+            background: #f8fafc;
+            color: #344054;
+            font-size: 13px;
+            line-height: 1.25;
+            white-space: nowrap;
+            cursor: default;
+        }
+        .doc-check-item__label {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .doc-check-item--present {
+            border-color: #a7d8b5;
+            background: #f1fbf4;
+            color: #176b32;
+        }
+        .doc-check-item--missing {
+            border-color: #f1b8b3;
+            background: #fff5f5;
+            color: #9f1f18;
+        }
+        .doc-check-item--not_applicable {
+            color: #788392;
+            background: #f5f6f8;
+        }
+        @media (max-width: 760px) {
+            .doc-check-row {
+                grid-template-columns: 1fr;
+            }
+        }
+        .doc-check-tooltip {
+            display: none;
+            position: fixed;
+            left: 48px;
+            right: 48px;
+            top: 138px;
+            z-index: 2000;
+            max-height: min(58vh, 560px);
+            overflow: auto;
+            box-sizing: border-box;
+            padding: 14px 16px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            background: #ffffff;
+            color: #172033;
+            box-shadow: 0 18px 42px rgba(15, 23, 42, .25);
+            white-space: normal;
+            font-size: 13px;
+            line-height: 1.45;
+        }
+        .doc-check-item:hover .doc-check-tooltip,
+        .doc-check-item:focus .doc-check-tooltip {
+            display: block;
+        }
+        .doc-check-tooltip__title {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 14px;
+            font-weight: 800;
+            color: #0f172a;
+        }
+        .doc-check-tooltip__note {
+            display: block;
+            margin-bottom: 10px;
+            color: #475569;
+        }
+        .doc-check-tooltip__source {
+            display: block;
+            padding-top: 10px;
+            margin-top: 10px;
+            border-top: 1px solid #e2e8f0;
+        }
+        .doc-check-tooltip__path {
+            display: block;
+            margin-bottom: 6px;
+            color: #64748b;
+            font-size: 12px;
+        }
+        .doc-check-tooltip__text {
+            display: block;
+            color: #172033;
+        }
+        </style>
+        """
+            '<div class="doc-check-panel">'
+            '<div class="doc-check-panel__header">'
+            '<span class="doc-check-panel__title">Проверки уровня документа</span>'
+            f'<span class="doc-check-panel__summary">'
+            f'✅ {present_count} · ⚠️ {problem_count} · ➖ {skipped_count}'
+            "</span>"
+            "</div>"
+            '<div class="doc-check-row">'
+            + "".join(chips)
+            + "</div></div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def requirement_status_view(status: str) -> dict[str, str]:
     labels = {
         "present": "найдено",
         "missing": "не найдено",
-        "incomplete": "незаполнено",
-        "needs_review": "проверить",
         "not_applicable": "не применимо",
     }
-    return {"label": labels.get(status, status)}
+    marks = {
+        "present": "✅",
+        "missing": "❌",
+        "not_applicable": "➖",
+    }
+    return {"label": labels.get(status, status), "mark": marks.get(status, status)}
+
+
+def build_requirement_tooltip_html(check: RequirementCheck) -> str:
+    status = requirement_status_view(check.status)
+    sources = source_chunks_for_requirement(check)
+    source_html_parts = []
+
+    for chunk in sources[:8]:
+        hierarchy = " -> ".join(str(item) for item in chunk.get("hierarchy_path", []) if item)
+        text = str(chunk.get("original_text") or chunk.get("normalized_text") or "").strip()
+        source_html_parts.append(
+            (
+                '<span class="doc-check-tooltip__source">'
+                f'<span class="doc-check-tooltip__path">{html.escape(hierarchy)}</span>'
+                f'<span class="doc-check-tooltip__text">{html.escape(text)}</span>'
+                "</span>"
+            )
+        )
+
+    if len(sources) > 8:
+        source_html_parts.append(
+            (
+                '<span class="doc-check-tooltip__source">'
+                f'<span class="doc-check-tooltip__path">Еще {len(sources) - 8} норм не показано</span>'
+                "</span>"
+            )
+        )
+
+    if not source_html_parts:
+        source_html_parts.append(
+            (
+                '<span class="doc-check-tooltip__source">'
+                f'<span class="doc-check-tooltip__path">{html.escape(build_requirement_source(check))}</span>'
+                "</span>"
+            )
+        )
+
+    return (
+        f'<span class="doc-check-tooltip__title">'
+        f'{html.escape(status["mark"])} {html.escape(check.title)}'
+        "</span>"
+        f'<span class="doc-check-tooltip__note">{html.escape(check.note)}</span>'
+        + "".join(source_html_parts)
+    )
+
+
+def source_chunks_for_requirement(check: RequirementCheck) -> list[dict]:
+    by_id = load_tk_chunks_by_id()
+    by_article = load_tk_chunks_by_article()
+    chunks = []
+    seen: set[str] = set()
+
+    for source_chunk in check.source_chunks:
+        if source_chunk.endswith(":*"):
+            article = source_chunk.removeprefix("art:").removesuffix(":*")
+            for chunk in by_article.get(article, []):
+                chunk_id = str(chunk.get("chunk_id") or "")
+                if chunk_id and chunk_id not in seen:
+                    seen.add(chunk_id)
+                    chunks.append(chunk)
+            continue
+
+        chunk = by_id.get(source_chunk)
+        if chunk is None or source_chunk in seen:
+            continue
+        seen.add(source_chunk)
+        chunks.append(chunk)
+
+    return chunks
+
+
+@lru_cache(maxsize=1)
+def load_tk_chunks_by_id() -> dict[str, dict]:
+    chunks = load_tk_chunks()
+    return {str(chunk.get("chunk_id") or ""): chunk for chunk in chunks}
+
+
+@lru_cache(maxsize=1)
+def load_tk_chunks_by_article() -> dict[str, list[dict]]:
+    result: dict[str, list[dict]] = {}
+    for chunk in load_tk_chunks():
+        article = str(chunk.get("article_number") or "")
+        if article:
+            result.setdefault(article, []).append(chunk)
+    return result
+
+
+@lru_cache(maxsize=1)
+def load_tk_chunks() -> tuple[dict, ...]:
+    return tuple(
+        json.loads(line)
+        for line in rag_chunks_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    )
 
 
 def build_requirement_source(check: RequirementCheck) -> str:
