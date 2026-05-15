@@ -9,3 +9,4 @@ pdftext
 pymupdf
 pillow
 pypdfium2
+matplotlib
