@@ -52,7 +52,6 @@ def main() -> None:
                 definition_top_k=controls.definition_top_k,
                 definition_similarity_threshold=controls.definition_similarity_threshold,
                 max_clauses=None,
-                contradiction_threshold=controls.contradiction_threshold,
                 run_contradiction_scoring=controls.run_scoring,
                 run_reranking=controls.run_reranking,
                 progress_callback=on_progress,

@@ -13,7 +13,11 @@ from transformers import TextClassificationPipeline
 from sentence_transformers import CrossEncoder
 
 from src import config
-from src.core.classification.contradiction import contradiction_scores, get_nli_pipeline
+from src.core.classification.contradiction import (
+    get_nli_pipeline,
+    nli_scores,
+    predicted_nli_label,
+)
 from src.core.document_checks.requirements import (
     RequirementCheck,
     analyze_contract_requirements,
@@ -30,7 +34,6 @@ from src.core.retrieve.retrieve import load_fiass, retrieve_top_k
 from src.core.retrieve.rerank import load_reranker, rerank_top_k
 
 DEFAULT_CONTRADICTION_MODEL = "cointegrated/rubert-base-cased-nli-threeway"
-DEFAULT_CONTRADICTION_THRESHOLD = 0.5
 DEFAULT_DEFINITION_TOP_K = 4
 DEFAULT_DEFINITION_SIMILARITY_THRESHOLD = 0.72
 DEFAULT_RUN_RERANKING = True
@@ -39,7 +42,7 @@ DEFAULT_RERANKER_BATCH_SIZE = 16
 DEFAULT_RERANKER_MAX_LENGTH = 512
 DEFAULT_RERANKER_CANDIDATE_MULTIPLIER = 4
 DEFAULT_NLI_BATCH_SIZE = 16
-ANALYSIS_SCHEMA_VERSION = 8
+ANALYSIS_SCHEMA_VERSION = 9
 BBox = tuple[float, float, float, float]
 
 
@@ -53,6 +56,8 @@ class MatchResult:
     part_number: str
     subpart_number: str
     rerank_score: float | None
+    entailment_score: float | None
+    neutral_score: float | None
     contradiction_score: float | None
     auto_label: str
 
@@ -170,7 +175,6 @@ def analyze_pdf(
     definition_similarity_threshold: float = DEFAULT_DEFINITION_SIMILARITY_THRESHOLD,
     max_clauses: int | None = 40,
     contradiction_model_name: str = DEFAULT_CONTRADICTION_MODEL,
-    contradiction_threshold: float = DEFAULT_CONTRADICTION_THRESHOLD,
     run_contradiction_scoring: bool = True,
     run_reranking: bool = DEFAULT_RUN_RERANKING,
     progress_callback: Callable[[int, int, str], None] | None = None,
@@ -207,7 +211,6 @@ def analyze_pdf(
             nli=nli,
             top_k=top_k,
             contradiction_model_name=contradiction_model_name,
-            contradiction_threshold=contradiction_threshold,
             run_contradiction_scoring=run_contradiction_scoring,
             reranker=reranker,
             run_reranking=run_reranking,
@@ -239,7 +242,6 @@ def analyze_pdf(
             "definition_similarity_threshold": definition_similarity_threshold,
             "max_clauses": max_clauses,
             "contradiction_model_name": contradiction_model_name,
-            "contradiction_threshold": contradiction_threshold,
             "run_contradiction_scoring": run_contradiction_scoring,
             "reranker_model": get_reranker_model_name() if run_reranking else None,
             "reranker_candidate_multiplier": get_reranker_candidate_multiplier() if run_reranking else None,
@@ -355,7 +357,6 @@ def find_matches(
     nli: TextClassificationPipeline | None,
     top_k: int,
     contradiction_model_name: str,  # kept for response payload compatibility
-    contradiction_threshold: float,
     run_contradiction_scoring: bool,
     reranker: CrossEncoder | None = None,
     run_reranking: bool = DEFAULT_RUN_RERANKING,
@@ -413,6 +414,8 @@ def find_matches(
                     if item.get("rerank_score") is not None
                     else None
                 ),
+                entailment_score=None,
+                neutral_score=None,
                 contradiction_score=None,
                 auto_label="not_scored",
             )
@@ -427,13 +430,13 @@ def find_matches(
             if match.norm_text
         ]
         if scoreable_indexes:
-            scores = contradiction_scores(
+            scores = nli_scores(
                 nli,
                 [(query_text, matches[index].norm_text) for index in scoreable_indexes],
                 bidirectional=True,
                 batch_size=get_nli_batch_size(),
             )
-            for index, score in zip(scoreable_indexes, scores, strict=False):
+            for index, score_set in zip(scoreable_indexes, scores, strict=False):
                 match = matches[index]
                 matches[index] = MatchResult(
                     match_id=match.match_id,
@@ -444,12 +447,10 @@ def find_matches(
                     part_number=match.part_number,
                     subpart_number=match.subpart_number,
                     rerank_score=match.rerank_score,
-                    contradiction_score=score,
-                    auto_label=(
-                        "contradiction"
-                        if score >= contradiction_threshold
-                        else "not_contradiction"
-                    ),
+                    entailment_score=float(score_set.get("entailment", 0.0)),
+                    neutral_score=float(score_set.get("neutral", 0.0)),
+                    contradiction_score=float(score_set.get("contradiction", 0.0)),
+                    auto_label=predicted_nli_label(score_set),
                 )
 
     return matches

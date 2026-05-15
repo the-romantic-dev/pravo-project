@@ -49,19 +49,29 @@ def render_results(analysis: AnalysisResult) -> None:
 
     labels = st.session_state.setdefault("labels", {})
     for match in clause.matches:
-        rerank = (
-            f"  **Rerank:** `{match.rerank_score:.3f}`"
-            if match.rerank_score is not None
-            else ""
-        )
         with st.container(border=True):
+            status = nli_status_view(match.auto_label)
             st.markdown(
                 (
-                    f"**Схожесть:** `{match.similarity:.3f}`  "
-                    f"{rerank}  "
-                    f"**Авто-лейбл:** `{match.auto_label}`  "
-                    f"**P(contradiction):** `{format_score(match.contradiction_score)}`"
-                )
+                    '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;'
+                    'margin:0 0 8px 0;font-size:13px;">'
+                    f'<span><strong>Схожесть:</strong> <code>{match.similarity:.3f}</code></span>'
+                    + (
+                        f'<span><strong>Rerank:</strong> <code>{match.rerank_score:.3f}</code></span>'
+                        if match.rerank_score is not None
+                        else ""
+                    )
+                    + (
+                        f'<span style="display:inline-block;padding:2px 8px;border-radius:999px;'
+                        f'background:{status["background"]};color:{status["color"]};'
+                        f'font-weight:700;">{html.escape(status["label"])}</span>'
+                    )
+                    + f'<span><strong>E:</strong> <code>{format_score(match.entailment_score)}</code></span>'
+                    + f'<span><strong>N:</strong> <code>{format_score(match.neutral_score)}</code></span>'
+                    + f'<span><strong>C:</strong> <code>{format_score(match.contradiction_score)}</code></span>'
+                    '</div>'
+                ),
+                unsafe_allow_html=True,
             )
             st.write(build_ref(match))
             if match.hierarchy_path:
@@ -69,10 +79,13 @@ def render_results(analysis: AnalysisResult) -> None:
             st.write(match.norm_text)
 
             current_label = labels.get(match.match_id, {}).get("manual_label", "unknown")
+            if current_label == "not_contradiction":
+                current_label = "entailment"
             label_options = {
                 "unknown": "не размечено",
+                "entailment": "соответствие",
+                "neutral": "нейтрально",
                 "contradiction": "противоречие",
-                "not_contradiction": "нет противоречия",
             }
             selected_label = st.radio(
                 "Ручная пометка",
@@ -91,6 +104,36 @@ def render_results(analysis: AnalysisResult) -> None:
                 "manual_label": selected_label,
                 "comment": comment,
             }
+
+
+def nli_status_view(auto_label: str) -> dict[str, str]:
+    statuses = {
+        "entailment": {
+            "label": "entailment",
+            "color": "#2f9e44",
+            "background": "#ebfbee",
+        },
+        "neutral": {
+            "label": "neutral",
+            "color": "#868e96",
+            "background": "#f1f3f5",
+        },
+        "contradiction": {
+            "label": "contradiction",
+            "color": "#d94841",
+            "background": "#fff5f5",
+        },
+        # Backward compatibility for analyses saved before schema v9.
+        "not_contradiction": {
+            "label": "entailment",
+            "color": "#2f9e44",
+            "background": "#ebfbee",
+        },
+    }
+    return statuses.get(
+        auto_label,
+        {"label": "not_scored", "color": "#868e96", "background": "#f1f3f5"},
+    )
 
 
 def render_document_checks(analysis: AnalysisResult) -> None:

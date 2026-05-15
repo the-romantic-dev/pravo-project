@@ -12,7 +12,6 @@ class SidebarControls:
     definition_similarity_threshold: float
     run_reranking: bool
     run_scoring: bool
-    contradiction_threshold: float
     highlight_threshold: float
 
 
@@ -46,16 +45,8 @@ def render_sidebar_controls() -> SidebarControls:
                 value=True,
             )
             run_scoring = st.checkbox(
-                "Считать вероятность противоречия автоматически",
+                "Считать NLI-метки автоматически",
                 value=True,
-            )
-            contradiction_threshold = st.slider(
-                "Порог противоречия",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.5,
-                step=0.01,
-                disabled=not run_scoring,
             )
             highlight_threshold = st.slider(
                 "Порог подсветки bbox (по похожести)",
@@ -71,6 +62,5 @@ def render_sidebar_controls() -> SidebarControls:
         definition_similarity_threshold=float(definition_similarity_threshold),
         run_reranking=run_reranking,
         run_scoring=run_scoring,
-        contradiction_threshold=float(contradiction_threshold),
         highlight_threshold=float(highlight_threshold),
     )

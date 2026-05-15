@@ -51,7 +51,10 @@ def build_annotations_by_page(
                         if match.rerank_score is not None
                         else ""
                     ),
+                    "entailment_score": format_score(match.entailment_score),
+                    "neutral_score": format_score(match.neutral_score),
                     "contradiction_score": format_score(match.contradiction_score),
+                    "nli_label": match.auto_label,
                     "status_text": status["text"],
                     "status_color": status["color"],
                 }
@@ -90,10 +93,15 @@ def build_annotations_by_page(
 
 
 def map_status(auto_label: str) -> dict[str, str]:
+    if auto_label == "entailment":
+        return {"text": "Соответствует", "color": "#2f9e44"}
+    if auto_label == "neutral":
+        return {"text": "Нейтрально", "color": "#868e96"}
     if auto_label == "contradiction":
         return {"text": "Противоречит", "color": "#d94841"}
+    # Backward compatibility for analyses saved before schema v9.
     if auto_label == "not_contradiction":
-        return {"text": "Не противоречит", "color": "#2f9e44"}
+        return {"text": "Соответствует", "color": "#2f9e44"}
     return {"text": "Не оценено", "color": "#868e96"}
 
 

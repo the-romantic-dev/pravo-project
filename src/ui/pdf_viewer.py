@@ -196,7 +196,7 @@ def build_cards_html(annotations: list[dict]) -> str:
             )
             match_parts.append(
                 (
-                    '<div class="tk-match-card">'
+                    f'<div class="tk-match-card" style="border-left:4px solid {match["status_color"]};">'
                     '<div class="tk-match-card__header">'
                     f'<span>{idx}. {html.escape(match["tk_ref"])}</span>'
                     f'<span>sim {html.escape(match["similarity"])}</span>'
@@ -206,7 +206,11 @@ def build_cards_html(annotations: list[dict]) -> str:
                     '<div class="tk-match-card__footer">'
                     f'<span class="tk-status" style="background:{match["status_color"]}22;'
                     f'color:{match["status_color"]};">{html.escape(match["status_text"])}</span>'
-                    f'<span class="tk-score">P(contr): {html.escape(match["contradiction_score"])}</span>'
+                    '<span class="tk-score">'
+                    f'E {html.escape(str(match.get("entailment_score", "n/a")))} · '
+                    f'N {html.escape(str(match.get("neutral_score", "n/a")))} · '
+                    f'C {html.escape(str(match.get("contradiction_score", "n/a")))}'
+                    '</span>'
                     '</div>'
                     '</div>'
                 )
