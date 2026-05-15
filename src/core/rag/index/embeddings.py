@@ -5,10 +5,19 @@ from typing import List
 from langchain_core.embeddings import Embeddings
 from sentence_transformers import SentenceTransformer
 
+from src.core.util.device import get_model_device
+
 
 class E5Embeddings(Embeddings):
-    def __init__(self, model_name: str, batch_size: int = 64, normalize: bool = True) -> None:
-        self.model = SentenceTransformer(model_name)
+    def __init__(
+        self,
+        model_name: str,
+        batch_size: int = 64,
+        normalize: bool = True,
+        device: str | None = None,
+    ) -> None:
+        self.device = device or get_model_device()
+        self.model = SentenceTransformer(model_name, device=self.device)
         self.batch_size = batch_size
         self.normalize = normalize
 
